@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PPM Viewer</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1d2026;
+    --border: #2d323b;
+    --text: #e3e6eb;
+    --muted: #8b93a1;
+    --accent: #5b9cff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
+  button, .btn {
+    background: #272b33;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover, .btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; border-color: var(--border); }
+  .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+  #zoomLabel { min-width: 56px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #stage {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    background-color: #1a1c21;
+    background-image:
+      linear-gradient(45deg, #202329 25%, transparent 25%, transparent 75%, #202329 75%),
+      linear-gradient(45deg, #202329 25%, transparent 25%, transparent 75%, #202329 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 10px 10px;
+  }
+  #wrap {
+    min-width: 100%;
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    box-shadow: 0 0 0 1px #000, 0 6px 24px rgba(0,0,0,.5);
+    flex: none;
+    display: none;
+  }
+  #drop {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--muted);
+    pointer-events: none;
+    padding: 24px;
+  }
+  #drop strong { color: var(--text); display: block; font-size: 18px; margin-bottom: 6px; }
+  body.dragging #stage { outline: 2px dashed var(--accent); outline-offset: -8px; }
+  footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    padding: 6px 12px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    min-height: 32px;
+    align-items: center;
+  }
+  footer .swatch {
+    display: inline-block; width: 12px; height: 12px; vertical-align: -1px;
+    border: 1px solid var(--border); margin-right: 4px;
+  }
+  #error { color: #ff7b7b; }
+  #warn { color: #ffcf6b; }
+  dialog {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    width: min(560px, 92vw);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  textarea {
+    width: 100%;
+    height: 220px;
+    background: #111317;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    resize: vertical;
+  }
+  .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PPM Viewer</h1>
+  <label class="btn">Open file…
+    <input id="file" type="file" accept=".ppm,.pgm,.pbm,.pnm" hidden>
+  </label>
+  <button id="pasteBtn">Paste text</button>
+  <button id="sampleBtn">Sample</button>
+  <span class="sep"></span>
+  <button id="zoomOut" title="Zoom out (−)" disabled>−</button>
+  <span id="zoomLabel">–</span>
+  <button id="zoomIn" title="Zoom in (+)" disabled>+</button>
+  <button id="fit" disabled>Fit</button>
+  <button id="actual" disabled>1:1</button>
+  <span class="sep"></span>
+  <button id="savePng" disabled>Save PNG</button>
+</header>
+
+<div id="stage">
+  <div id="wrap"><canvas id="cv"></canvas></div>
+  <div id="drop"><div><strong>Drop a .ppm / .pgm / .pbm file here</strong>
+    Supports P1–P6 (ASCII and binary), 8 and 16 bit.<br>Nothing is uploaded — everything stays in your browser.</div></div>
+</div>
+
+<footer>
+  <span id="info">No image loaded</span>
+  <span id="pixel"></span>
+  <span id="warn"></span>
+  <span id="error"></span>
+</footer>
+
+<dialog id="dlg">
+  <div style="margin-bottom:8px">Paste ASCII PPM/PGM/PBM text (P1, P2 or P3):</div>
+  <textarea id="txt" spellcheck="false" placeholder="P3&#10;2 2&#10;255&#10;255 0 0   0 255 0&#10;0 0 255   255 255 0"></textarea>
+  <div class="row">
+    <button id="dlgCancel">Cancel</button>
+    <button id="dlgOk" style="border-color:var(--accent)">Show</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = id => document.getElementById(id);
+  const stage = $('stage'), cv = $('cv'), ctx = cv.getContext('2d');
+  const info = $('info'), pixelEl = $('pixel'), warnEl = $('warn'), errEl = $('error');
+  const zoomLabel = $('zoomLabel');
+
+  let img = null;          // { w, h, maxval, type, raw (Uint16Array rgb), name }
+  let zoom = 1;
+
+  // ---------- Parser ----------
+  const isWS = c => c === 32 || (c >= 9 && c <= 13);
+
+  function parseNetpbm(buf) {
+    const n = buf.length;
+    let pos = 0;
+    const warnings = [];
+
+    function skipWSandComments() {
+      while (pos < n) {
+        const c = buf[pos];
+        if (c === 35) { while (pos < n && buf[pos] !== 10 && buf[pos] !== 13) pos++; }
+        else if (isWS(c)) pos++;
+        else break;
+      }
+    }
+    function token() {
+      skipWSandComments();
+      const s = pos;
+      while (pos < n && !isWS(buf[pos]) && buf[pos] !== 35) pos++;
+      let str = '';
+      for (let i = s; i < pos; i++) str += String.fromCharCode(buf[i]);
+      return str;
+    }
+    function uint(name) {
+      const t = token();
+      if (!/^\d+$/.test(t)) throw new Error('Invalid ' + name + ' in header' + (t ? ' ("' + t.slice(0, 20) + '")' : ' (unexpected end of file)'));
+      return parseInt(t, 10);
+    }
+
+    const magic = token();
+    if (!/^P[1-6]$/.test(magic)) throw new Error('Not a Netpbm file (expected magic P1–P6, found "' + magic.slice(0, 10) + '")');
+    const type = +magic[1];
+    const ascii = type <= 3;
+    const kind = (type === 1 || type === 4) ? 'bit' : (type === 2 || type === 5) ? 'gray' : 'rgb';
+    const channels = kind === 'rgb' ? 3 : 1;
+
+    const w = uint('width'), h = uint('height');
+    if (!w || !h) throw new Error('Image has zero width or height');
+    if (w * h > 400e6) throw new Error('Image is too large (' + w + '×' + h + ')');
+    let maxval = 1;
+    if (kind !== 'bit') {
+      maxval = uint('maxval');
+      if (maxval < 1 || maxval > 65535) throw new Error('Maxval must be between 1 and 65535 (got ' + maxval + ')');
+    }
+
+    const count = w * h * channels;
+    const raw = new Uint16Array(count);   // zero-filled -> missing data shows as black
+    let got = 0;
+
+    if (ascii) {
+      if (kind === 'bit') {
+        // digits may be contiguous ("0101") or whitespace separated
+        while (got < count && pos < n) {
+          const c = buf[pos++];
+          if (c === 35) { while (pos < n && buf[pos] !== 10 && buf[pos] !== 13) pos++; }
+          else if (c === 48) raw[got++] = 0;
+          else if (c === 49) raw[got++] = 1;
+          else if (!isWS(c)) throw new Error('Unexpected character in P1 data: "' + String.fromCharCode(c) + '"');
+        }
+      } else {
+        while (got < count) {
+          skipWSandComments();
+          if (pos >= n) break;
+          let v = 0, digits = 0;
+          while (pos < n) {
+            const c = buf[pos];
+            if (c >= 48 && c <= 57) { v = v * 10 + (c - 48); digits++; pos++; }
+            else break;
+          }
+          if (!digits) throw new Error('Unexpected character in ASCII data: "' + String.fromCharCode(buf[pos]) + '"');
+          if (v > maxval) { v = maxval; if (!warnings.includes('clamp')) warnings.push('clamp'); }
+          raw[got++] = v;
+        }
+      }
+    } else {
+      // Exactly one whitespace byte separates header from raster
+      if (pos < n && isWS(buf[pos])) pos++;
+      if (kind === 'bit') {
+        const rowBytes = (w + 7) >> 3;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const bi = pos + y * rowBytes + (x >> 3);
+            if (bi >= n) break;
+            raw[got++] = (buf[bi] >> (7 - (x & 7))) & 1;
+          }
+        }
+        if (pos + rowBytes * h > n) got = Math.min(got, Math.max(0, Math.floor((n - pos) / rowBytes)) * w);
+      } else if (maxval < 256) {
+        const avail = Math.min(count, n - pos);
+        for (let i = 0; i < avail; i++) raw[i] = buf[pos + i];
+        got = Math.max(0, avail);
+      } else {
+        const avail = Math.min(count, (n - pos) >> 1);
+        for (let i = 0; i < avail; i++) raw[i] = (buf[pos + 2 * i] << 8) | buf[pos + 2 * i + 1];
+        got = Math.max(0, avail);
+      }
+    }
+
+    if (got < count) {
+      const missing = Math.round((count - got) / channels);
+      warnings.push('File is truncated: ' + missing.toLocaleString() + ' pixel(s) missing (shown as black)');
+    }
+    const msgs = warnings.map(x => x === 'clamp' ? 'Some values exceeded maxval and were clamped' : x);
+    return { type, magic, kind, channels, w, h, maxval, raw, warnings: msgs };
+  }
+
+  // ---------- Rendering ----------
+  function render(parsed, name, size) {
+    const { w, h, maxval, raw, kind, channels } = parsed;
+    cv.width = w; cv.height = h;
+    const out = ctx.createImageData(w, h);
+    const d = out.data;
+    const total = w * h;
+    if (kind === 'bit') {
+      for (let i = 0, o = 0; i < total; i++, o += 4) {
+        const v = raw[i] ? 0 : 255;       // 1 = black in PBM
+        d[o] = d[o + 1] = d[o + 2] = v; d[o + 3] = 255;
+      }
+    } else if (kind === 'gray') {
+      const k = 255 / maxval;
+      for (let i = 0, o = 0; i < total; i++, o += 4) {
+        const v = Math.round(raw[i] * k);
+        d[o] = d[o + 1] = d[o + 2] = v; d[o + 3] = 255;
+      }
+    } else {
+      const k = 255 / maxval;
+      for (let i = 0, o = 0, s = 0; i < total; i++, o += 4, s += 3) {
+        d[o] = Math.round(raw[s] * k);
+        d[o + 1] = Math.round(raw[s + 1] * k);
+        d[o + 2] = Math.round(raw[s + 2] * k);
+        d[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(out, 0, 0);
+
+    img = { ...parsed, name, size };
+    cv.style.display = 'block';
+    $('drop').style.display = 'none';
+    ['zoomIn', 'zoomOut', 'fit', 'actual', 'savePng'].forEach(id => $(id).disabled = false);
+
+    const fmt = { bit: 'bitmap', gray: 'graymap', rgb: 'pixmap' }[kind];
+    const bits = kind === 'bit' ? '1-bit' : (maxval < 256 ? '8-bit' : '16-bit');
+    info.textContent = (name ? name + ' · ' : '') + parsed.magic + ' (' + (parsed.type <= 3 ? 'ASCII' : 'binary') + ' ' + fmt + ') · ' +
+      w + '×' + h + ' · maxval ' + maxval + ' · ' + bits + (size != null ? ' · ' + formatBytes(size) : '');
+    warnEl.textContent = parsed.warnings.join(' · ');
+    errEl.textContent = '';
+    pixelEl.textContent = '';
+    fitToWindow();
+  }
+
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    return (b / 1048576).toFixed(1) + ' MB';
+  }
+
+  function setZoom(z, anchor) {
+    const old = zoom;
+    zoom = Math.max(0.02, Math.min(256, z));
+    cv.style.width = (img.w * zoom) + 'px';
+    cv.style.height = (img.h * zoom) + 'px';
+    zoomLabel.textContent = (zoom * 100 >= 10 ? Math.round(zoom * 100) : (zoom * 100).toFixed(1)) + '%';
+    if (anchor) { // keep the point under the cursor stable
+      const r = stage.getBoundingClientRect();
+      const px = anchor.x - r.left, py = anchor.y - r.top;
+      const ratio = zoom / old;
+      stage.scrollLeft = (stage.scrollLeft + px) * ratio - px;
+      stage.scrollTop = (stage.scrollTop + py) * ratio - py;
+    }
+  }
+
+  function fitToWindow() {
+    if (!img) return;
+    const availW = stage.clientWidth - 48, availH = stage.clientHeight - 48;
+    setZoom(Math.min(availW / img.w, availH / img.h));
+    stage.scrollLeft = stage.scrollTop = 0;
+  }
+
+  // ---------- Loading ----------
+  function showError(msg) {
+    errEl.textContent = msg;
+    warnEl.textContent = '';
+  }
+
+  function loadBuffer(buf, name, size) {
+    try {
+      const parsed = parseNetpbm(buf);
+      render(parsed, name, size);
+    } catch (e) {
+      showError('Error: ' + e.message);
+    }
+  }
+
+  async function loadFile(file) {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    loadBuffer(buf, file.name, file.size);
+  }
+
+  // ---------- Events ----------
+  $('file').addEventListener('change', e => {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  let dragDepth = 0;
+  window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+  window.addEventListener('dragleave', e => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault();
+    dragDepth = 0; document.body.classList.remove('dragging');
+    const f = e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+
+  $('zoomIn').onclick = () => setZoom(zoom * 1.25);
+  $('zoomOut').onclick = () => setZoom(zoom / 1.25);
+  $('fit').onclick = fitToWindow;
+  $('actual').onclick = () => setZoom(1);
+  window.addEventListener('resize', () => { /* keep current zoom */ });
+
+  stage.addEventListener('wheel', e => {
+    if (!img) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), { x: e.clientX, y: e.clientY });
+    }
+  }, { passive: false });
+
+  window.addEventListener('keydown', e => {
+    if (!img || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === '+' || e.key === '=') setZoom(zoom * 1.25);
+    else if (e.key === '-') setZoom(zoom / 1.25);
+    else if (e.key === '0') setZoom(1);
+    else if (e.key.toLowerCase() === 'f') fitToWindow();
+  });
+
+  // Pixel inspector
+  cv.addEventListener('mousemove', e => {
+    if (!img) return;
+    const r = cv.getBoundingClientRect();
+    const x = Math.floor((e.clientX - r.left) / r.width * img.w);
+    const y = Math.floor((e.clientY - r.top) / r.height * img.h);
+    if (x < 0 || y < 0 || x >= img.w || y >= img.h) { pixelEl.textContent = ''; return; }
+    const p = ctx.getImageData(x, y, 1, 1).data;
+    const hex = '#' + [p[0], p[1], p[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+    const i = (y * img.w + x) * img.channels;
+    const rawVals = img.kind === 'rgb' ? Array.from(img.raw.slice(i, i + 3)).join(', ') : img.raw[i];
+    pixelEl.innerHTML = '<span class="swatch" style="background:' + hex + '"></span>' +
+      '(' + x + ', ' + y + ') · raw ' + rawVals + ' · rgb(' + p[0] + ', ' + p[1] + ', ' + p[2] + ') · ' + hex;
+  });
+  cv.addEventListener('mouseleave', () => { pixelEl.textContent = ''; });
+
+  // Save PNG
+  $('savePng').onclick = () => {
+    if (!img) return;
+    cv.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (img.name ? img.name.replace(/\.[^.]+$/, '') : 'image') + '.png';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }, 'image/png');
+  };
+
+  // Paste dialog
+  const dlg = $('dlg');
+  $('pasteBtn').onclick = () => { dlg.showModal(); $('txt').focus(); };
+  $('dlgCancel').onclick = () => dlg.close();
+  $('dlgOk').onclick = () => {
+    const bytes = new TextEncoder().encode($('txt').value);
+    dlg.close();
+    loadBuffer(bytes, 'pasted text', bytes.length);
+  };
+
+  // Sample image (generated P3 text, so you can see the parser at work)
+  $('sampleBtn').onclick = () => {
+    const w = 32, h = 32;
+    let s = 'P3\n# generated sample\n' + w + ' ' + h + '\n255\n';
+    for (let y = 0; y < h; y++) {
+      const row = [];
+      for (let x = 0; x < w; x++) {
+        const dx = x - 15.5, dy = y - 15.5;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const r = Math.round(255 * x / (w - 1));
+        const g = Math.round(255 * y / (h - 1));
+        const b = dist < 11 ? 220 : 60;
+        const checker = ((x >> 2) + (y >> 2)) & 1;
+        row.push((checker && dist >= 11 ? 255 - r : r) + ' ' + g + ' ' + b);
+      }
+      s += row.join('  ') + '\n';
+    }
+    const bytes = new TextEncoder().encode(s);
+    loadBuffer(bytes, 'sample.ppm', bytes.length);
+  };
+})();
+</script>
+</body>
+</html>
